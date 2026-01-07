@@ -5,80 +5,107 @@ const bodyParser = require('body-parser');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Middleware
 app.use(cors());
 app.use(bodyParser.json());
 
-// --- DATA LAYER (In-Memory) ---
+// --- CAMADA DE DADOS (Em Memória) ---
 let todos = [
   { id: 1, text: "Architecture Analysis (Initial)", completed: false },
   { id: 2, text: "Implement MVC", completed: true }
 ];
 
-// --- REACTIVE LAYER (SSE Clients) ---
+// --- CAMADA REATIVA (Clientes SSE) ---
 let clients = [];
 
 const broadcastEvents = () => {
   const payload = JSON.stringify(todos);
   clients.forEach(client => {
-    // SSE format: "data: <payload>\n\n"
+    // Formato SSE: "data: <payload>\n\n"
     client.response.write(`data: ${payload}\n\n`);
   });
 };
 
-// --- REST ENDPOINTS (Pull Architecture) ---
+// --- ENDPOINTS REST (Arquitetura Pull) ---
 
-// GET: Retrieve tasks. Changes here do NOT affect other clients in REST mode.
 app.get('/todos', (req, res) => {
   res.json(todos);
 });
 
-// POST: Add task. Triggers broadcast for Reactive clients, but REST clients must pull again.
 app.post('/todos', (req, res) => {
   const { text } = req.body;
-  if (!text) return res.status(400).json({ error: "Text required" });
+  if (!text) {
+    return res.status(400).json({ error: "Texto da tarefa é obrigatório" });
+  }
 
   const newTodo = {
     id: Date.now(),
     text,
     completed: false
   };
+
   todos.push(newTodo);
 
-  // Trigger Reactive Update
+  // Dispara atualização reativa
   broadcastEvents();
 
   res.status(201).json(newTodo);
 });
 
-// DELETE: Remove task.
-app.delete('/todos/:id', (req, res) => {
+app.put('/todos/:id', (req, res) => {
   const { id } = req.params;
-  todos = todos.filter(t => t.id!= id);
+  const { text, completed } = req.body;
 
-  // Trigger Reactive Update
+  const todoIndex = todos.findIndex(t => t.id == id);
+
+  if (todoIndex === -1) {
+    return res.status(404).json({ error: "Tarefa não encontrada" });
+  }
+
+  // Atualiza apenas os campos enviados
+  if (text !== undefined) {
+    todos[todoIndex].text = text;
+  }
+
+  if (completed !== undefined) {
+    todos[todoIndex].completed = completed;
+  }
+
+  // Dispara atualização reativa
   broadcastEvents();
 
-  res.status(200).json({ message: "Deleted" });
+  res.json(todos[todoIndex]);
 });
 
-// --- REACTIVE ENDPOINT (Push Architecture) ---
+// DELETE: Remove uma tarefa.
+app.delete('/todos/:id', (req, res) => {
+  const { id } = req.params;
 
-// GET /events: Establishes the persistent SSE connection
+  todos = todos.filter(t => t.id != id);
+
+  // Dispara atualização reativa
+  broadcastEvents();
+
+  res.status(200).json({ message: "Tarefa removida" });
+});
+
+// --- ENDPOINT REATIVO (Arquitetura Push) ---
+
+// GET /events: Estabelece conexão SSE persistente
 app.get('/events', (req, res) => {
-  // Headers required for SSE
+  // Cabeçalhos SSE
   const headers = {
     'Content-Type': 'text/event-stream',
     'Connection': 'keep-alive',
     'Cache-Control': 'no-cache'
   };
+
   res.writeHead(200, headers);
 
-  // Send initial data immediately
+  // Envia o estado inicial
   const data = `data: ${JSON.stringify(todos)}\n\n`;
   res.write(data);
 
-  // Register client
+  // Registra o cliente
   const clientId = Date.now();
   const newClient = {
     id: clientId,
@@ -86,16 +113,16 @@ app.get('/events', (req, res) => {
   };
   clients.push(newClient);
 
-  // Handle connection close
+  // Remove cliente quando a conexão é encerrada
   req.on('close', () => {
-    console.log(`${clientId} Connection closed`);
-    clients = clients.filter(client => client.id!== clientId);
+    console.log(`Conexão ${clientId} encerrada`);
+    clients = clients.filter(client => client.id !== clientId);
   });
 });
 
-// Start Server
+// Inicializa o servidor
 app.listen(PORT, () => {
-  console.log(`Backend running on port ${PORT}`);
-  console.log(`- REST API: http://localhost:${PORT}/todos`);
-  console.log(`- Reactive Stream: http://localhost:${PORT}/events`);
+  console.log(`Backend rodando na porta ${PORT}`);
+  console.log(`- API REST: http://localhost:${PORT}/todos`);
+  console.log(`- Stream Reativo: http://localhost:${PORT}/events`);
 });
